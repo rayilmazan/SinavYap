@@ -1,0 +1,6 @@
+{
+  "name": "Sınav Yap",
+  "description": "Öğrenme çıktılarına göre yapay zekâ destekli 10 soruluk çoktan seçmeli sınav oluşturma ve PDF karneli sonuç değerlendirme sistemi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
