@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI, Type } from '@google/genai';
 import { GEMINI_MODEL, SYSTEM_INSTRUCTION } from '@/lib/talimat';
 import { ExamData, Question } from '@/lib/types';
+import { getAuthUser } from '@/lib/auth';
 
 export const maxDuration = 60; // Allow sufficient time for quality 10-question generation
 
@@ -14,6 +15,17 @@ const MODELS_TO_TRY = [
 
 export async function POST(req: NextRequest) {
   try {
+    const user = await getAuthUser();
+    if (!user) {
+      return NextResponse.json(
+        {
+          error:
+            'Sınav oluşturabilmek için lütfen öncelikle kullanıcı girişi yapınız.',
+        },
+        { status: 401 }
+      );
+    }
+
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(

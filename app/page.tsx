@@ -1,10 +1,12 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Header } from '@/components/Header';
 import { SectionOutcomes } from '@/components/SectionOutcomes';
 import { SectionExam } from '@/components/SectionExam';
 import { SectionResult } from '@/components/SectionResult';
+import { AuthModal } from '@/components/AuthModal';
+import { HistoryDrawer } from '@/components/HistoryDrawer';
 import { ExamData, ExamResult, OptionKey } from '@/lib/types';
 import { SAMPLE_OUTCOMES } from '@/lib/sample-outcomes';
 
@@ -14,10 +16,15 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // User Auth State
+  const [user, setUser] = useState<{ id: number; name: string; email: string } | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState<boolean>(false);
+
   // Exam Data
   const [examData, setExamData] = useState<ExamData | null>(null);
 
-  // Student Anonymous Code/ID (Default random 4-digit ID, strictly NO personal data)
+  // Student Anonymous Code/ID
   const [studentCode, setStudentCode] = useState<string>(() => {
     return `OGR-${Math.floor(1000 + Math.random() * 9000)}`;
   });
@@ -28,9 +35,41 @@ export default function Home() {
   // Result object
   const [result, setResult] = useState<ExamResult | null>(null);
 
+  // Initial Auth Check & Database Setup
+  useEffect(() => {
+    // 1. Check logged in user
+    fetch('/api/auth/me')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.authenticated && data.user) {
+          setUser(data.user);
+        }
+      })
+      .catch((err) => console.error('Auth check error:', err));
+
+    // 2. Initialize DB tables silently if needed
+    fetch('/api/db/init').catch((err) => console.error('DB init check:', err));
+  }, []);
+
+  // Handle Logout
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      setUser(null);
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
+  };
+
   // Handle Generate Exam via server-side API route
   const handleGenerateExam = async () => {
     if (!outcomesText.trim()) return;
+
+    // AUTH GUARD: User must be logged in to generate exam!
+    if (!user) {
+      setIsAuthModalOpen(true);
+      return;
+    }
 
     setIsLoading(true);
     setError(null);
@@ -52,10 +91,22 @@ export default function Home() {
         throw new Error(data.error || 'Sınav soruları oluşturulamadı.');
       }
 
-      setExamData(data.exam);
-      // Reset answers and results
+      const newExam: ExamData = data.exam;
+      setExamData(newExam);
       setUserAnswers({});
       setResult(null);
+
+      // Save Exam to PostgreSQL
+      fetch('/api/exams', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: newExam.examTitle || 'Kazanım Sınavı',
+          outcomesText,
+          examData: newExam,
+        }),
+      }).catch((err) => console.error('Veritabanına sınav kaydı hatası:', err));
+
       // Switch to Section 2 (Sınav Hazırla / Çöz)
       setActiveTab('exam');
     } catch (err: unknown) {
@@ -67,8 +118,14 @@ export default function Home() {
   };
 
   // Calculate results and finish exam
-  const handleFinishExam = (timeSpentSeconds: number = 0) => {
+  const handleFinishExam = async (timeSpentSeconds: number = 0) => {
     if (!examData) return;
+
+    // AUTH GUARD: User must be logged in
+    if (!user) {
+      setIsAuthModalOpen(true);
+      return;
+    }
 
     let correctCount = 0;
     let wrongCount = 0;
@@ -137,6 +194,27 @@ export default function Home() {
     setResult(finalResult);
     setActiveTab('result');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    // Save Exam Result to PostgreSQL
+    try {
+      await fetch('/api/results', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentCode: finalResult.studentCode,
+          score: finalResult.totalScore,
+          maxScore: finalResult.maxScore,
+          correctCount: finalResult.correctCount,
+          wrongCount: finalResult.wrongCount,
+          emptyCount: finalResult.emptyCount,
+          percentage: finalResult.percentage,
+          timeSpentSeconds: finalResult.timeSpentSeconds,
+          resultData: finalResult,
+        }),
+      });
+    } catch (err) {
+      console.error('Sonuç veritabanına kaydedilirken hata:', err);
+    }
   };
 
   const handleRetakeExam = () => {
@@ -159,6 +237,10 @@ export default function Home() {
         setActiveTab={setActiveTab}
         hasExam={!!examData}
         hasResult={!!result}
+        user={user}
+        onOpenAuthModal={() => setIsAuthModalOpen(true)}
+        onOpenHistoryDrawer={() => setIsHistoryDrawerOpen(true)}
+        onLogout={handleLogout}
       />
 
       {/* Main Content Sections */}
@@ -201,6 +283,32 @@ export default function Home() {
         )}
       </main>
 
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onSuccess={(loggedInUser) => {
+          setUser(loggedInUser);
+          setIsAuthModalOpen(false);
+        }}
+      />
+
+      {/* History Drawer */}
+      <HistoryDrawer
+        isOpen={isHistoryDrawerOpen}
+        onClose={() => setIsHistoryDrawerOpen(false)}
+        onSelectExam={(selectedExam) => {
+          setExamData(selectedExam);
+          setUserAnswers({});
+          setResult(null);
+          setActiveTab('exam');
+        }}
+        onSelectResult={(selectedResult) => {
+          setResult(selectedResult);
+          setActiveTab('result');
+        }}
+      />
+
       {/* Footer */}
       <footer className="border-t border-slate-200 bg-white py-6 text-center text-xs text-slate-500 no-print">
         <div className="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -208,7 +316,7 @@ export default function Home() {
           <div className="flex items-center gap-4 text-slate-400">
             <span>10 Soru • 100 Puan</span>
             <span>•</span>
-            <span>Kişisel Veri Saklanmaz</span>
+            <span>PostgreSQL Veritabanı Entegre</span>
           </div>
         </div>
       </footer>
